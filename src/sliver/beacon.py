@@ -203,8 +203,15 @@ class InteractiveBeacon(BaseBeacon, BaseInteractiveCommands):
 
     """Wrap all commands that can be executed against a beacon mode implant"""
 
-    async def interactive_session(self):
-        pass
+    async def interactive_session(self) -> sliver_pb2.OpenSession:
+        """
+        Promote this beacon to session mode by calling the OpenSession RPC.
+        Returns the OpenSession protobuf, whose .ID field is your new session ID.
+        """
+        pb = sliver_pb2.OpenSession()
+        req = self._request(pb)
+        resp: sliver_pb2.OpenSession = await self._stub.OpenSession(req,timeout=self.timeout)
+        return resp
 
     # ----------------  Wrapped super() commands ----------------
 

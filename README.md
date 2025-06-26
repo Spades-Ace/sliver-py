@@ -129,3 +129,26 @@ Tests are implemented using [Ward](https://github.com/darrenburns/ward). The tes
 - `ward` : All tests
 - `ward --tags client`: Client tests only
 - `ward --tags interactive`: InteractiveObject tests
+
+## Update
+
+### New Features
+
+- **Beacon → Session workflow**
+  - Added implementation to automatically create an interactive session from a beacon and to terminate that session cleanly when finished.
+
+- **SOCKS-5 proxy through Session**
+  - Added the capability to spin up a SOCKS-5 listener (`127.0.0.1:1080` by default) that tunnels traffic through the active session.
+
+- **Test Coverage**
+  - Introduced **`/tests/test_socks5.py`** to validate the beacon-promotion workflow, proxy start-up, end-to-end connectivity, and graceful teardown.
+
+**Note**  
+To run **`/tests/test_socks5.py`**, edit the script so that it points at your operator configuration file:
+
+```python
+CONFIG_PATH = Path("~/.sliver-client/configs/sliverpy.cfg").expand()
+```
+
+Adjust the path if your **`.cfg`** lives elsewhere.
+
