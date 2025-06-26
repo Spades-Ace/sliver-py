@@ -245,10 +245,9 @@ class InteractiveSession(BaseSession, BaseInteractiveCommands):
     
     async def interactive_session_close(self) -> sliver_pb2.CloseSession:
         """
-        Promote this beacon to session mode by calling the OpenSession RPC.
-        Returns the OpenSession protobuf, whose .ID field is your new session ID.
+        Close the interactive session by calling the CloseSession RPC.
         """
         pb = sliver_pb2.CloseSession()
         req = self._request(pb)
-        resp: sliver_pb2.OpenSession = await self._stub.CloseSession(req,timeout=self.timeout)
+        resp: sliver_pb2.CloseSession = await self._stub.CloseSession(req,timeout=self.timeout)
         return resp
