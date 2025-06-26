@@ -23,6 +23,17 @@ from .interactive import BaseInteractiveCommands
 from .pb.rpcpb.services_pb2_grpc import SliverRPCStub
 from .protobuf import client_pb2, sliver_pb2
 
+import asyncio , binascii
+from collections import defaultdict
+from typing import Dict
+
+def _debug(label: str, data: bytes):
+    """Pretty-print bytes for debugging."""
+    logging.debug("%s %s", label, binascii.hexlify(data, " ").decode())
+
+def _hexdump(b: bytes, maxlen: int = 64) -> str:
+    return binascii.hexlify(b[:maxlen], b" ").decode()
+
 
 class BaseSession:
     """Base class for Session objects.
@@ -251,3 +262,102 @@ class InteractiveSession(BaseSession, BaseInteractiveCommands):
         req = self._request(pb)
         resp: sliver_pb2.CloseSession = await self._stub.CloseSession(req,timeout=self.timeout)
         return resp
+    
+    async def socks5_start(self,bind_addr: str = "127.0.0.1",bind_port: int = 1080,username: str = "",password: str = "",rcv_chunk: int = 4096,):
+        """
+        Minimal SOCKS-5 pivot listener (passes everything straight through)
+        with *very* verbose debugging.
+        """
+
+        async def _handle_local(reader: asyncio.StreamReader,writer: asyncio.StreamWriter):
+
+            peer = writer.get_extra_info("peername")
+            logging.debug("NEW  client %s", peer)
+
+            # ------ open gRPC SocksProxy stream ----------------------------------
+            send_q: asyncio.Queue = asyncio.Queue()
+            stream = self._stub.SocksProxy(_socks_request_iterator(send_q))
+
+            async def _rx():                         # implant → client
+                try:
+                    async for sd in stream:
+                        logging.debug("I→P recv  seq=%s len=%s close=%s  %s",sd.Sequence, len(sd.Data), sd.CloseConn,_hexdump(sd.Data))
+                        if sd.CloseConn:
+                            writer.close(); return
+                        writer.write(sd.Data)
+                        await writer.drain()
+                except grpc.aio.AioRpcError as e:
+                    if e.code() != grpc.StatusCode.UNAVAILABLE:
+                        logging.error("gRPC error: %s", e)
+
+            asyncio.create_task(_rx())
+
+            # ------ create tunnel on Sliver --------------------------------------
+            rsp = await self._stub.CreateSocks(sliver_pb2.Socks(SessionID=self._session.ID), timeout=self.timeout)
+            tunnel_id = rsp.TunnelID
+            req_meta  = common_pb2.Request(SessionID=rsp.SessionID)
+
+            # ------ first read / first frame -------------------------------------
+            seq = 0
+            first = await reader.read(rcv_chunk)
+            if not first:
+                writer.close(); await writer.wait_closed(); await send_q.put(None)
+                return
+
+            await send_q.put(
+                sliver_pb2.SocksData(
+                    TunnelID=tunnel_id,
+                    Username=username,
+                    Password=password,
+                    Request=req_meta,
+                    Data=first,
+                    Sequence=seq,
+                )
+            )
+            logging.debug("P→I send  seq=%s len=%s close=False  %s",
+                        seq, len(first), _hexdump(first))
+            seq += 1
+
+            # ------ relay loop ----------------------------------------------------
+            try:
+                while True:
+                    data = await reader.read(rcv_chunk)
+                    if not data:
+                        logging.debug("EOF client %s", peer)
+                        await send_q.put(
+                            sliver_pb2.SocksData(
+                                TunnelID=tunnel_id,
+                                Username=username,
+                                Password=password,
+                                Request=req_meta,
+                                CloseConn=True,
+                            )
+                        )
+                        logging.debug("P→I send  CLOSE")
+                        break
+
+                    logging.debug("C→P data  %s", _hexdump(data))
+                    await send_q.put(
+                        sliver_pb2.SocksData(
+                            TunnelID=tunnel_id,
+                            Username=username,
+                            Password=password,
+                            Request=req_meta,
+                            Data=data,
+                            Sequence=seq,
+                        )
+                    )
+                    logging.debug("P→I send  seq=%s len=%s close=False",
+                                seq, len(data))
+                    seq += 1
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                await send_q.put(None)        # close iterator → gRPC stream
+                logging.debug("CLOSE tunnel %s", tunnel_id)
+
+        # ------ launch listener ---------------------------------------------------
+        server = await asyncio.start_server(_handle_local, bind_addr, bind_port)
+        host, port = server.sockets[0].getsockname()[:2]
+        print(f"[+] SOCKS-5 listener up on {host}:{port}  (Ctrl-C to stop)")
+        return server
