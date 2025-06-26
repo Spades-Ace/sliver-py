@@ -21,18 +21,23 @@ import grpc
 
 from .interactive import BaseInteractiveCommands
 from .pb.rpcpb.services_pb2_grpc import SliverRPCStub
-from .protobuf import client_pb2, sliver_pb2
+from .protobuf import client_pb2, sliver_pb2, common_pb2
 
 import asyncio , binascii
-from collections import defaultdict
-from typing import Dict
-
-def _debug(label: str, data: bytes):
-    """Pretty-print bytes for debugging."""
-    logging.debug("%s %s", label, binascii.hexlify(data, " ").decode())
 
 def _hexdump(b: bytes, maxlen: int = 64) -> str:
     return binascii.hexlify(b[:maxlen], b" ").decode()
+
+async def _socks_request_iterator(queue: asyncio.Queue):
+    """
+    Async generator that yields SocksData frames placed in `queue`.
+    Put None in the queue to signal shutdown.
+    """
+    while True:
+        item = await queue.get()
+        if item is None:          # sentinel -> close stream
+            break
+        yield item
 
 
 class BaseSession:
@@ -265,8 +270,7 @@ class InteractiveSession(BaseSession, BaseInteractiveCommands):
     
     async def socks5_start(self,bind_addr: str = "127.0.0.1",bind_port: int = 1080,username: str = "",password: str = "",rcv_chunk: int = 4096,):
         """
-        Minimal SOCKS-5 pivot listener (passes everything straight through)
-        with *very* verbose debugging.
+        SOCKS-5 pivot listener with *very* verbose debugging.
         """
 
         async def _handle_local(reader: asyncio.StreamReader,writer: asyncio.StreamWriter):
