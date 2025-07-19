@@ -365,3 +365,28 @@ class InteractiveSession(BaseSession, BaseInteractiveCommands):
         host, port = server.sockets[0].getsockname()[:2]
         print(f"[+] SOCKS-5 listener up on {host}:{port}  (Ctrl-C to stop)")
         return server
+
+    async def startpivot(self,port) -> sliver_pb2.PivotStartListenerReq:
+        """
+        Starts a pivot listener on the specified port.
+        :param port: Port to bind the listener to
+        :type port: int
+        :return: Protobuf PivotStartListenerReq object
+        :rtype: sliver_pb2.PivotStartListenerReq
+        """
+        
+        # 1) Instantiate the PivotStartListenerReq protobuf
+        pb = sliver_pb2.PivotStartListenerReq()
+        pb.BindAddress = port
+
+        # 2) Set the request attributes based on the current session
+        req = self._request(pb)
+
+        # 3) Fire the gRPC
+        resp: sliver_pb2.PivotStartListenerReq = await self._stub.PivotStartListener(
+            req,
+            timeout=self.timeout
+        )
+
+        # 4) Return the fully-populated response object
+        return resp
